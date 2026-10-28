@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Immutable IoT Logger</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --ink: #1d1d1b; --quiet: #6b6b66; --line: #e2e1dc;
+    --ok: #1f7a4d; --ok-bg: #e6f3ec; --bad: #b3261e; --bad-bg: #fbe9e7; --warn: #8a5a00; --warn-bg: #fdf3dc;
+    --accent: #2457c5; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--quiet); font-size: 13px; word-break: break-all; }
+  main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; display: grid; gap: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--quiet); font-size: 12px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow: hidden; }
+  section h2 { font-size: 15px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--quiet); font-weight: 500; font-size: 12px; }
+  td.mono { font-family: var(--mono); font-size: 12px; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .VALID, .anchored { background: var(--ok-bg); color: var(--ok); }
+  .TAMPERED, .MISSING, .UNVERIFIABLE, .failed { background: var(--bad-bg); color: var(--bad); }
+  .NOT_ANCHORED, .pending, .submitted, .closed { background: var(--warn-bg); color: var(--warn); }
+  button { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); border-color: #e8b4ae; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  #result { font-size: 13px; }
+  #result pre { background: #f2f2ef; border-radius: 8px; padding: 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; margin: 8px 0 0; }
+  .note { color: var(--quiet); font-size: 12px; margin: 8px 0 0; }
+  .reasons { margin: 6px 0 0 18px; padding: 0; }
+  .hot { color: var(--bad); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Immutable IoT Logger — live gateway</h1>
+  <div class="sub" id="ids">connecting…</div>
+</header>
+<main>
+  <div class="stats">
+    <div class="stat"><b id="s-readings">–</b><span>readings stored</span></div>
+    <div class="stat"><b id="s-anchored">–</b><span>batches anchored</span></div>
+    <div class="stat"><b id="s-open">–</b><span>readings waiting in open batch</span></div>
+    <div class="stat"><b id="s-policy">–</b><span>batching policy</span></div>
+  </div>
+
+  <section>
+    <h2>Audit against the chain
+      <span class="row-actions">
+        <button class="primary" id="btn-audit">Audit every record</button>
+      </span>
+    </h2>
+    <div id="result"><span class="note">Recomputes every record's hash from the database row, checks its signature and its Merkle proof against the root stored on-chain.</span></div>
+  </section>
+
+  <section id="demo" hidden>
+    <h2>Demo: act as a privileged database administrator
+      <span class="row-actions">
+        <button class="danger" id="btn-edit">Edit a stored temperature</button>
+        <button class="danger" id="btn-delete">Delete a stored reading</button>
+        <button id="btn-reset">Undo demo edits</button>
+      </span>
+    </h2>
+    <p class="note" id="demo-log">These buttons change the operator database directly, the way an insider could. Run the audit afterwards.</p>
+  </section>
+
+  <section>
+    <h2>Latest readings</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Seq</th><th>Device</th><th>Temp °C</th><th>RH %</th><th>Captured</th><th>Batch</th><th>Anchor</th><th></th></tr></thead>
+      <tbody id="readings"></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Latest batches</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Batch</th><th>Seq range</th><th>Readings</th><th>Merkle root</th><th>Batch object CID</th><th>Tx</th><th>Gas</th><th>Status</th></tr></thead>
+      <tbody id="batches"></tbody>
+    </table></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const short = (h, n = 10) => (h ? h.slice(0, n) + '…' + h.slice(-4) : '–');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const api = (p, opts) => fetch(p, opts).then((r) => r.json());
+let tamperedSeqs = new Set();
+
+async function refresh() {
+  const [st, rs, bs] = await Promise.all([api('/api/status'), api('/api/readings?limit=25'), api('/api/batches?limit=10')]);
+  $('ids').textContent = `gateway ${st.gateway} · contract ${st.contract} · chain ${st.chainId} (${st.chain.kind})`;
+  $('s-readings').textContent = st.counts.readings;
+  $('s-anchored').textContent = st.counts.anchored;
+  $('s-open').textContent = st.openBatch;
+  $('s-policy').textContent = `${st.batchSize} or ${st.batchIntervalMs / 1000}s`;
+  $('demo').hidden = !st.demoTamper;
+  tamperedSeqs = new Set(st.tampered);
+  $('readings').innerHTML = rs.map((r) => `<tr>
+      <td>${r.seq}</td><td>${esc(r.dev)}</td>
+      <td class="${r.temp > 8 ? 'hot' : ''}">${r.temp.toFixed(2)}</td><td>${r.hum.toFixed(1)}</td>
+      <td>${new Date(r.ts).toLocaleTimeString()}</td><td>${r.batch_no ?? '–'}</td>
+      <td><span class="chip ${r.batch_status || 'pending'}">${r.batch_status || 'pending'}</span></td>
+      <td><button data-seq="${r.seq}">Verify</button></td></tr>`).join('');
+  $('batches').innerHTML = bs.map((b) => `<tr>
+      <td>${b.batch_no}</td><td>${b.first_seq}–${b.last_seq}</td><td>${b.count}</td>
+      <td class="mono">${short(b.root)}</td><td class="mono">${short(b.manifest_cid, 12)}</td>
+      <td class="mono">${short(b.tx_hash)}</td><td>${b.gas_used ?? '–'}</td>
+      <td><span class="chip ${b.status}">${b.status}</span></td></tr>`).join('');
+}
+
+function showVerify(r) {
+  const reasons = (r.reasons || []).map((x) => `<li>${esc(x)}</li>`).join('');
+  $('result').innerHTML = `<div>Record <b>${r.seq}</b>: <span class="chip ${r.status}">${r.status}</span>
+    ${r.batchNo !== undefined ? ` · batch ${r.batchNo} (seq ${r.firstSeq}–${r.lastSeq})` : ''}</div>
+    ${reasons ? `<ul class="reasons">${reasons}</ul>` : ''}
+    <pre>${esc(JSON.stringify({ hash: r.hash, leafIndex: r.leafIndex, batchSize: r.batchSize, root: r.root, proof: r.proof, signer: r.signer, evidence: r.evidence }, null, 2))}</pre>`;
+}
+
+document.addEventListener('click', async (e) => {
+  const seq = e.target.dataset && e.target.dataset.seq;
+  if (seq !== undefined) showVerify(await api('/api/verify/' + seq));
+});
+
+$('btn-audit').onclick = async () => {
+  $('btn-audit').disabled = true;
+  const t0 = performance.now();
+  const a = await api('/api/audit');
+  const ms = Math.round(performance.now() - t0);
+  const c = a.counts;
+  // readings still in the open batch are expected; list only real problems
+  const probs = a.problems.filter((p) => p.status !== 'NOT_ANCHORED').slice(0, 20).map((p) => `<li><b>${p.seq}</b> <span class="chip ${p.status}">${p.status}</span> ${esc(p.reasons.join('; '))}</li>`).join('');
+  $('result').innerHTML = `<div>Checked <b>${a.checked}</b> records in ${ms} ms across ${a.anchoredBatches} anchored batches:
+    <span class="chip VALID">${c.VALID} valid</span> <span class="chip TAMPERED">${c.TAMPERED} tampered</span>
+    <span class="chip MISSING">${c.MISSING} missing</span> <span class="chip NOT_ANCHORED">${c.NOT_ANCHORED} not yet anchored</span></div>
+    ${probs ? `<ul class="reasons">${probs}</ul>` : ''}`;
+  $('btn-audit').disabled = false;
+};
+
+const demo = async (path) => {
+  const r = await api(path, { method: 'POST' });
+  $('demo-log').textContent = r.error ? r.error
+    : r.action === 'edit' ? `Changed reading ${r.seq} from ${r.from} °C to ${r.to} °C in the database. Now run the audit.`
+    : r.action === 'delete' ? `Deleted reading ${r.seq} from the database. Now run the audit.`
+    : `Restored ${r.restored} row(s).`;
+  refresh();
+};
+$('btn-edit').onclick = () => demo('/api/demo/edit');
+$('btn-delete').onclick = () => demo('/api/demo/delete');
+$('btn-reset').onclick = () => demo('/api/demo/reset');
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

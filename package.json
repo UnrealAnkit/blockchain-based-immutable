@@ -1,0 +1,27 @@
+{
+  "name": "iot-immutable-logger",
+  "version": "1.0.0",
+  "description": "Blockchain-based immutable data logger for IoT: gateway signing, Merkle batching, on-chain anchoring and independent verification",
+  "main": "src/system.js",
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test test/units.test.js test/contract.test.js test/pipeline.test.js",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo.js",
+    "dashboard": "node --disable-warning=ExperimentalWarning scripts/dashboard.js",
+    "experiments": "node --disable-warning=ExperimentalWarning scripts/experiments.js",
+    "experiments:quick": "node --disable-warning=ExperimentalWarning scripts/experiments.js --quick",
+    "charts": "python3 scripts/charts.py",
+    "verify-bundle": "node scripts/verify-bundle.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "aedes": "^0.51.3",
+    "ethers": "^6.17.0",
+    "ganache": "7.9.2",
+    "mqtt": "^5.16.1",
+    "solc": "0.8.28"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "private": true
+}
